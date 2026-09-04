@@ -71,6 +71,22 @@ def _format_checker() -> FormatChecker:
     return checker
 
 
+def _timezone_aware_rfc3339(value: Any) -> bool:
+    if not isinstance(value, str):
+        return False
+    validator = Draft202012Validator(
+        DATETIME_PROBE_SCHEMA,
+        format_checker=_format_checker(),
+    )
+    if not validator.is_valid(value):
+        return False
+    try:
+        parsed = _parse_time(value)
+    except (TypeError, ValueError):
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
 def _effective_state(value: Any, protocol: dict[str, Any]) -> Any:
     return protocol["lifecycle"]["legacy_state_aliases"].get(value, value)
 
@@ -154,6 +170,37 @@ def _validate_protocol(protocol: dict[str, Any]) -> None:
     validation_rule = _find_rule(protocol, "VALIDATION", "TASKS")
     if not validation_rule or not any(req.get("type") == "effective_validation_equals" for req in validation_rule.get("requirements", [])):
         raise ValueError("VALIDATION -> TASKS must use effective validation")
+
+    repair_rules = [
+        rule for rule in protocol.get("regressions", [])
+        if (rule.get("from"), rule.get("to")) == ("AUDIT", "IMPLEMENT")
+    ]
+    expected_requirements = [
+        {"type": "field_equals", "field": "audit_result", "value": "FAIL", "blocker": "AUDIT_RESULT_NOT_FAIL"},
+        {"type": "timezone_aware_rfc3339", "field": "audited_at", "blocker": "AUDITED_AT_INVALID"},
+        {"type": "non_empty_string_array", "field": "audit_reasons", "blocker": "AUDIT_REASONS_MISSING"},
+        {"type": "field_present", "field": "design_path", "blocker": "REQUIRED_ARTIFACT_MISSING"},
+        {"type": "field_present", "field": "spec_path", "blocker": "REQUIRED_ARTIFACT_MISSING"},
+        {"type": "field_present_alias_aware", "field": "task_path", "legacy_alias": "tasks_path", "blocker": "REQUIRED_ARTIFACT_MISSING"},
+        {"type": "effective_validation_equals", "value": "PASS", "blocker": "VALIDATION_NOT_PASSED"},
+        {"type": "effective_verification_equals", "value": "PASS", "blocker": "VERIFICATION_NOT_EXECUTED"},
+    ]
+    if len(repair_rules) != 1:
+        raise ValueError("AUDIT -> IMPLEMENT manual repair regression is missing or duplicated")
+    repair = repair_rules[0]
+    if (
+        repair.get("mode") != "MANUAL_EXPLICIT_ONLY"
+        or repair.get("automatic_successor") is not False
+        or repair.get("trigger") != {"field": "audit_result", "equals": "FAIL"}
+        or repair.get("requirements") != expected_requirements
+        or repair.get("record_effect") != {
+            "allowed_changed_fields": ["state", "updated_at"],
+            "preserve_all_other_fields": True,
+        }
+    ):
+        raise ValueError("AUDIT -> IMPLEMENT manual repair semantics are invalid")
+    if protocol.get("audit_fail_repair", {}).get("automatic_target", object()) is not None:
+        raise ValueError("AUDIT FAIL repair must not have an automatic target")
 
 
 def load_contracts(schema_path: Path = DEFAULT_SCHEMA, protocol_path: Path = DEFAULT_PROTOCOL) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -277,6 +324,19 @@ def evaluate_transition(record: dict[str, Any], protocol: dict[str, Any], from_s
             expected = req["value"]
             if _effective_verification(record.get("verification_result")) != expected:
                 deny.append(_reason(blocker, f"verification_result must provide effective {expected} evidence.", "$.verification_result"))
+        elif kind == "timezone_aware_rfc3339":
+            field = req["field"]
+            if not _timezone_aware_rfc3339(record.get(field)):
+                deny.append(_reason(blocker, f"{field} must be a timezone-aware RFC3339 timestamp.", f"$.{field}"))
+        elif kind == "non_empty_string_array":
+            field = req["field"]
+            value = record.get(field)
+            if (
+                not isinstance(value, list)
+                or not value
+                or any(not isinstance(item, str) or not item.strip() for item in value)
+            ):
+                deny.append(_reason(blocker, f"{field} must be a non-empty array of non-empty strings.", f"$.{field}"))
         elif kind == "no_blocking_open_questions":
             blocked = _blocking_questions(record)
             if blocked:

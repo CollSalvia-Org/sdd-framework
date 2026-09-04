@@ -372,6 +372,7 @@ class SddCliTests(unittest.TestCase):
                 "AUDIT",
                 audit_result="FAIL",
                 audited_at="2026-08-01T00:07:00Z",
+                audit_reasons=["Explicit failed audit reason."],
             ),
         )
         self.assertEqual(payload["next_status"], "BLOCKED")
@@ -382,6 +383,49 @@ class SddCliTests(unittest.TestCase):
         self.assertEqual(
             {item["code"] for item in payload["routes"][0]["reasons"]},
             {"AUDIT_FAILED"},
+        )
+        self.assertFalse(any(route["to"] == "IMPLEMENT" for route in payload["routes"]))
+
+    def test_manual_audit_fail_repair_requires_explicit_transition_invocation(self) -> None:
+        record = route_record(
+            "AUDIT",
+            design_path="docs/sdd/artifacts/design/feat-900-cli/design.md",
+            spec_path="docs/sdd/artifacts/specs/feat-900-cli/spec.md",
+            task_path="docs/sdd/artifacts/tasks/feat-900-cli/tasks.md",
+            validation_result="PASS",
+            validated_at="2026-08-01T00:05:00Z",
+            verification_result="PASS",
+            verified_at="2026-08-01T00:06:00Z",
+            audit_result="FAIL",
+            audited_at="2026-08-01T02:07:00+02:00",
+            audit_reasons=["Explicit failed audit reason."],
+        )
+        automatic = self.payload("next", record)
+        self.assertEqual(automatic["next_status"], "BLOCKED")
+        self.assertFalse(any(route["to"] == "IMPLEMENT" for route in automatic["routes"]))
+
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "feature.json"
+            path.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+            done = subprocess.run(
+                [
+                    sys.executable,
+                    str(VALIDATOR),
+                    str(path),
+                    "--mode", "write",
+                    "--transition", "AUDIT:IMPLEMENT",
+                    "--format", "json",
+                ],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        payload = json.loads(done.stdout)
+        self.assertEqual(
+            payload["gate"],
+            {"result": "ALLOW", "from": "AUDIT", "to": "IMPLEMENT", "reasons": []},
         )
 
     def test_archive_is_terminal(self) -> None:

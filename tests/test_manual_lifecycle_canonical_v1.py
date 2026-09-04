@@ -603,10 +603,16 @@ class ManualLifecycleCanonicalV1Tests(unittest.TestCase):
         self.assertEqual(archive_gate.result, "DENY")
         self.assertEqual({item.code for item in archive_gate.reasons}, {"AUDIT_FAILED"})
         self.assertIsNone(self.protocol["audit_fail_repair"]["automatic_target"])
-        self.assertEqual(
-            sdd.evaluate_transition(audit_fail, self.protocol, "AUDIT", "IMPLEMENT").result,
-            "DENY",
+        repair_gate = sdd.evaluate_transition(
+            audit_fail, self.protocol, "AUDIT", "IMPLEMENT"
         )
+        self.assertEqual(repair_gate.result, "ALLOW", repair_gate.reasons)
+        repair_rule = next(
+            rule for rule in self.protocol["regressions"]
+            if (rule["from"], rule["to"]) == ("AUDIT", "IMPLEMENT")
+        )
+        self.assertEqual(repair_rule["mode"], "MANUAL_EXPLICIT_ONLY")
+        self.assertFalse(repair_rule["automatic_successor"])
 
     def test_current_use_policy_semantics(self) -> None:
         assert_current_use_semantics(ROOT)

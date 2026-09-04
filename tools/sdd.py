@@ -54,7 +54,10 @@ def _candidate_rules(protocol: dict[str, Any], effective_state: Any) -> list[tup
         candidates.extend(
             (kind, rule)
             for rule in protocol.get(key, [])
-            if rule.get("from") == effective_state
+            if (
+                rule.get("from") == effective_state
+                and rule.get("automatic_successor", True) is True
+            )
         )
     return candidates
 

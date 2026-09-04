@@ -413,6 +413,107 @@ class CanonicalSddV1Tests(unittest.TestCase):
         self.assertEqual(self.gate("audit_fail_without_waiver").result, "DENY")
         self.assertEqual(self.gate("audit_fail_with_valid_waiver").result, "ALLOW")
 
+    def test_manual_audit_fail_repair_is_explicit_only_and_preserves_history(self) -> None:
+        base = self.timestamp_record(
+            "AUDIT",
+            design_path="docs/sdd/artifacts/design/feat-901-datetime/design.md",
+            spec_path="docs/sdd/artifacts/specs/feat-901-datetime/spec.md",
+            task_path="docs/sdd/artifacts/tasks/feat-901-datetime/tasks.md",
+            validation_result="PASS",
+            validated_at="2026-08-26T00:10:00Z",
+            validation_details="Validation history.",
+            verification_result="PASS",
+            verified_at="2026-08-26T00:20:00Z",
+            verification_details="Verification history.",
+            audit_result="FAIL",
+            audited_at="2026-08-26T02:30:00+02:00",
+            audit_reasons=["Candidate content does not conform."],
+            audit_report_path="docs/sdd/artifacts/audit_reports/feat-901-datetime/audit.md",
+        )
+        validation = sdd.validate_record(base, self.schema, self.protocol, "write")
+        self.assertTrue(validation["valid"], validation["errors"])
+        gate = sdd.evaluate_transition(base, self.protocol, "AUDIT", "IMPLEMENT")
+        self.assertEqual(gate.result, "ALLOW", gate.reasons)
+
+        repair = next(
+            rule for rule in self.protocol["regressions"]
+            if (rule["from"], rule["to"]) == ("AUDIT", "IMPLEMENT")
+        )
+        self.assertEqual(repair["mode"], "MANUAL_EXPLICIT_ONLY")
+        self.assertFalse(repair["automatic_successor"])
+        self.assertNotIn("owner", json.dumps(repair).lower())
+        self.assertEqual(
+            repair["record_effect"],
+            {"allowed_changed_fields": ["state", "updated_at"], "preserve_all_other_fields": True},
+        )
+        self.assertIsNone(self.protocol["audit_fail_repair"]["automatic_target"])
+
+        target = dict(base, state="IMPLEMENT", updated_at="2026-08-26T00:40:00Z")
+        target_validation = sdd.validate_record(target, self.schema, self.protocol, "write")
+        self.assertTrue(target_validation["valid"], target_validation["errors"])
+        self.assertEqual(
+            {
+                key for key in set(base) | set(target)
+                if (key in base) != (key in target) or base.get(key) != target.get(key)
+            },
+            {"state", "updated_at"},
+        )
+        for field in (
+            "design_path", "spec_path", "task_path",
+            "validation_result", "validated_at", "validation_details",
+            "verification_result", "verified_at", "verification_details",
+            "audit_result", "audited_at", "audit_reasons", "audit_report_path",
+        ):
+            self.assertEqual(target[field], base[field])
+
+    def test_manual_audit_fail_repair_denials_are_route_scoped(self) -> None:
+        valid = self.timestamp_record(
+            "AUDIT",
+            design_path="docs/sdd/artifacts/design/feat-901-datetime/design.md",
+            spec_path="docs/sdd/artifacts/specs/feat-901-datetime/spec.md",
+            task_path="docs/sdd/artifacts/tasks/feat-901-datetime/tasks.md",
+            validation_result="PASS",
+            validated_at="2026-08-26T00:10:00Z",
+            verification_result="PASS",
+            verified_at="2026-08-26T00:20:00Z",
+            audit_result="FAIL",
+            audited_at="2026-08-26T00:30:00Z",
+            audit_reasons=["Exact failed audit reason."],
+        )
+        cases = {
+            "result_pass": (dict(valid, audit_result="PASS"), "AUDIT_RESULT_NOT_FAIL"),
+            "result_warn": (dict(valid, audit_result="WARN"), "AUDIT_RESULT_NOT_FAIL"),
+            "missing_reasons": ({key: value for key, value in valid.items() if key != "audit_reasons"}, "AUDIT_REASONS_MISSING"),
+            "empty_reasons": (dict(valid, audit_reasons=[]), "AUDIT_REASONS_MISSING"),
+            "blank_reason": (dict(valid, audit_reasons=["  "]), "AUDIT_REASONS_MISSING"),
+            "missing_audited_at": ({key: value for key, value in valid.items() if key != "audited_at"}, "AUDITED_AT_INVALID"),
+            "naive_audited_at": (dict(valid, audited_at="2026-08-26T00:30:00"), "AUDITED_AT_INVALID"),
+            "missing_design": ({key: value for key, value in valid.items() if key != "design_path"}, "REQUIRED_ARTIFACT_MISSING"),
+            "missing_spec": ({key: value for key, value in valid.items() if key != "spec_path"}, "REQUIRED_ARTIFACT_MISSING"),
+            "missing_tasks": ({key: value for key, value in valid.items() if key != "task_path"}, "REQUIRED_ARTIFACT_MISSING"),
+            "missing_validation": ({key: value for key, value in valid.items() if key != "validation_result"}, "VALIDATION_NOT_PASSED"),
+            "missing_verification": ({key: value for key, value in valid.items() if key != "verification_result"}, "VERIFICATION_NOT_EXECUTED"),
+        }
+        for name, (record, blocker) in cases.items():
+            with self.subTest(case=name):
+                gate = sdd.evaluate_transition(record, self.protocol, "AUDIT", "IMPLEMENT")
+                self.assertEqual(gate.result, "DENY")
+                self.assertIn(blocker, {item.code for item in gate.reasons})
+        wrong_source = dict(valid, state="VERIFY")
+        gate = sdd.evaluate_transition(wrong_source, self.protocol, "AUDIT", "IMPLEMENT")
+        self.assertEqual(gate.result, "DENY")
+        self.assertEqual({item.code for item in gate.reasons}, {"SOURCE_STATE_MISMATCH"})
+
+        audit_pass = self.timestamp_record(
+            "AUDIT",
+            audit_result="PASS",
+            audited_at="2026-08-26T00:30:00Z",
+        )
+        archive = sdd.evaluate_transition(audit_pass, self.protocol, "AUDIT", "ARCHIVE")
+        self.assertEqual(archive.result, "ALLOW", archive.reasons)
+        widened = dict(valid, audit_findings=["forbidden parallel field"])
+        self.assertFalse(sdd.validate_record(widened, self.schema, self.protocol, "write")["valid"])
+
     def test_legacy_read_and_canonical_write(self) -> None:
         record = self.cases["done_legacy_alias"]["record"]
         read = sdd.validate_record(record, self.schema, self.protocol, "read")
