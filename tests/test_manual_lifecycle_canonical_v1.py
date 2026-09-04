@@ -613,6 +613,22 @@ class ManualLifecycleCanonicalV1Tests(unittest.TestCase):
         )
         self.assertEqual(repair_rule["mode"], "MANUAL_EXPLICIT_ONLY")
         self.assertFalse(repair_rule["automatic_successor"])
+        self.assertEqual(
+            repair_rule["record_effect"]["allowed_changed_fields"],
+            ["state", "updated_at", "audit_result", "audited_at", "audit_reasons"],
+        )
+        self.assertEqual(
+            repair_rule["record_effect"]["audit_history_value_source"],
+            "TRUSTED_SEALED_AUDIT_EVIDENCE",
+        )
+        self.assertEqual(
+            repair_rule["record_effect"]["existing_audit_history_policy"],
+            {
+                "ABSENT": "INTRODUCE_FROM_TRUSTED_EVIDENCE",
+                "EXACT_MATCH_WITH_TRUSTED_EVIDENCE": "PRESERVE",
+                "CONFLICTING_PRESENT": "DENY",
+            },
+        )
 
     def test_current_use_policy_semantics(self) -> None:
         assert_current_use_semantics(ROOT)

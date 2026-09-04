@@ -443,28 +443,86 @@ class CanonicalSddV1Tests(unittest.TestCase):
         self.assertFalse(repair["automatic_successor"])
         self.assertNotIn("owner", json.dumps(repair).lower())
         self.assertEqual(
+            repair["trigger"],
+            {
+                "field": "audit_result",
+                "equals": "FAIL",
+                "value_source": "TRUSTED_SEALED_AUDIT_EVIDENCE",
+                "current_record_may_be_absent": True,
+            },
+        )
+        self.assertEqual(
             repair["record_effect"],
-            {"allowed_changed_fields": ["state", "updated_at"], "preserve_all_other_fields": True},
+            {
+                "allowed_changed_fields": [
+                    "state", "updated_at", "audit_result", "audited_at", "audit_reasons"
+                ],
+                "trusted_evidence_introduced_fields": [
+                    "audit_result", "audited_at", "audit_reasons"
+                ],
+                "audit_history_value_source": "TRUSTED_SEALED_AUDIT_EVIDENCE",
+                "existing_audit_history_policy": {
+                    "ABSENT": "INTRODUCE_FROM_TRUSTED_EVIDENCE",
+                    "EXACT_MATCH_WITH_TRUSTED_EVIDENCE": "PRESERVE",
+                    "CONFLICTING_PRESENT": "DENY",
+                },
+                "preserve_all_other_fields": True,
+            },
         )
         self.assertIsNone(self.protocol["audit_fail_repair"]["automatic_target"])
 
-        target = dict(base, state="IMPLEMENT", updated_at="2026-08-26T00:40:00Z")
-        target_validation = sdd.validate_record(target, self.schema, self.protocol, "write")
+        matching_target = dict(base, state="IMPLEMENT", updated_at="2026-08-26T00:40:00Z")
+        target_validation = sdd.validate_record(matching_target, self.schema, self.protocol, "write")
         self.assertTrue(target_validation["valid"], target_validation["errors"])
         self.assertEqual(
             {
-                key for key in set(base) | set(target)
-                if (key in base) != (key in target) or base.get(key) != target.get(key)
+                key for key in set(base) | set(matching_target)
+                if (key in base) != (key in matching_target)
+                or base.get(key) != matching_target.get(key)
             },
             {"state", "updated_at"},
+        )
+
+        absent = {
+            key: value for key, value in base.items()
+            if key not in {"audit_result", "audited_at", "audit_reasons"}
+        }
+        absent_validation = sdd.validate_record(absent, self.schema, self.protocol, "write")
+        self.assertTrue(absent_validation["valid"], absent_validation["errors"])
+        trusted_history = {
+            "audit_result": base["audit_result"],
+            "audited_at": base["audited_at"],
+            "audit_reasons": base["audit_reasons"],
+        }
+        trusted_gate_record = dict(absent, **trusted_history)
+        trusted_gate = sdd.evaluate_transition(
+            trusted_gate_record, self.protocol, "AUDIT", "IMPLEMENT"
+        )
+        self.assertEqual(trusted_gate.result, "ALLOW", trusted_gate.reasons)
+        atomic_target = dict(
+            absent,
+            **trusted_history,
+            state="IMPLEMENT",
+            updated_at="2026-08-26T00:40:00Z",
+        )
+        atomic_validation = sdd.validate_record(
+            atomic_target, self.schema, self.protocol, "write"
+        )
+        self.assertTrue(atomic_validation["valid"], atomic_validation["errors"])
+        self.assertEqual(
+            {
+                key for key in set(absent) | set(atomic_target)
+                if (key in absent) != (key in atomic_target)
+                or absent.get(key) != atomic_target.get(key)
+            },
+            set(repair["record_effect"]["allowed_changed_fields"]),
         )
         for field in (
             "design_path", "spec_path", "task_path",
             "validation_result", "validated_at", "validation_details",
             "verification_result", "verified_at", "verification_details",
-            "audit_result", "audited_at", "audit_reasons", "audit_report_path",
         ):
-            self.assertEqual(target[field], base[field])
+            self.assertEqual(atomic_target[field], absent[field])
 
     def test_manual_audit_fail_repair_denials_are_route_scoped(self) -> None:
         valid = self.timestamp_record(

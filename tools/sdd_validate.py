@@ -191,10 +191,26 @@ def _validate_protocol(protocol: dict[str, Any]) -> None:
     if (
         repair.get("mode") != "MANUAL_EXPLICIT_ONLY"
         or repair.get("automatic_successor") is not False
-        or repair.get("trigger") != {"field": "audit_result", "equals": "FAIL"}
+        or repair.get("trigger") != {
+            "field": "audit_result",
+            "equals": "FAIL",
+            "value_source": "TRUSTED_SEALED_AUDIT_EVIDENCE",
+            "current_record_may_be_absent": True,
+        }
         or repair.get("requirements") != expected_requirements
         or repair.get("record_effect") != {
-            "allowed_changed_fields": ["state", "updated_at"],
+            "allowed_changed_fields": [
+                "state", "updated_at", "audit_result", "audited_at", "audit_reasons"
+            ],
+            "trusted_evidence_introduced_fields": [
+                "audit_result", "audited_at", "audit_reasons"
+            ],
+            "audit_history_value_source": "TRUSTED_SEALED_AUDIT_EVIDENCE",
+            "existing_audit_history_policy": {
+                "ABSENT": "INTRODUCE_FROM_TRUSTED_EVIDENCE",
+                "EXACT_MATCH_WITH_TRUSTED_EVIDENCE": "PRESERVE",
+                "CONFLICTING_PRESENT": "DENY",
+            },
             "preserve_all_other_fields": True,
         }
     ):
