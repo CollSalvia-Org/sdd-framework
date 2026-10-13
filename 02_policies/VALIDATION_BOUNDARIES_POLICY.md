@@ -89,6 +89,13 @@ It does not declare a general transition from an arbitrary later state back to S
 | Verification finds an implementation mismatch | Record FAIL evidence and use `VERIFY -> IMPLEMENT`. |
 | Scope expansion or new requirement | Capture a new seed and feature; do not silently alter the active validated spec. |
 | AUDIT FAIL | Remain governed by the audit archive gate; no automatic repair state is selected. |
+| Implementation bug discovered after `ARCHIVE` | Keep the archived predecessor immutable; use the archived corrective successor rule below when no declared correction route applies. |
+
+## Archived corrective successor
+
+A correction that restores behavior already specified by an archived feature remains a correction, not a new capability. When the original feature is archived and no declared correction route applies, the correction may proceed as a corrective successor through the ordinary lifecycle, with its own feature record and evidence. The successor must reference the archived predecessor, remain limited to the already-specified behavior, and inherit no validation, verification, audit, archive, or other PASS from the predecessor.
+
+This rule does **not** authorize new capability, behavior absent from the predecessor's authoritative specification, mutation or reopening of the archived feature, or any transition out of `ARCHIVE`.
 
 ---
 

@@ -21,6 +21,12 @@ Do not guess. If the case is unclear, treat it as a gap and stop.
 3. If the change is useful but not ready to become a feature, treat it as **parking lot gap**.
 4. If the change is a stable reusable capability, treat it as **new capability**.
 
+## Archived corrective successor
+
+A correction that restores behavior already specified by an archived feature remains a correction, not a new capability. When the original feature is archived and no declared correction route applies, the correction may proceed as a corrective successor through the ordinary lifecycle, with its own feature record and evidence. The successor must reference the archived predecessor, remain limited to the already-specified behavior, and inherit no validation, verification, audit, archive, or other PASS from the predecessor.
+
+This rule does **not** authorize new capability, behavior absent from the predecessor's authoritative specification, mutation or reopening of the archived feature, or any transition out of `ARCHIVE`.
+
 ## Escalation Rule
 
 If an agent cannot clearly classify the change:
@@ -39,6 +45,6 @@ If an agent cannot clearly classify the change:
 
 ## Hard Rule
 
-Agents must not convert every small fix into a new spec.
+Agents must not convert every small fix into a new spec. An archived corrective successor is permitted only by the bounded rule above when the ordinary correction route is unavailable.
 Agents must not leave a real contract change undocumented.
 Agents must not invent a feature from an implementation patch.
